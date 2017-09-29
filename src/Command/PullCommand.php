@@ -58,14 +58,14 @@ class PullCommand extends Command {
     $sSenhaRoot = $this->getApplication()->getConfig('senhaRoot');
 
     /**
-     * Executa comando como root 
+     * Executa comando como root
      * - caso for existir senha no arquivo de configuracoes
      */
     if ( !empty($sSenhaRoot) ) {
       $sComandoRoot = "echo '{$sSenhaRoot}' | sudo -S ";
     }
 
-    $oComando = $this->getApplication()->execute($sComandoRoot . 'chmod 777 -R ' . getcwd());
+    $oComando = $this->getApplication()->execute($sComandoRoot . 'chmod 775 -R ' . getcwd());
     $aRetornoComandoPermissoes = $oComando->output;
     $iStatusComandoPermissoes = $oComando->code;
 

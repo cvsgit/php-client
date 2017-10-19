@@ -5,6 +5,7 @@ namespace Cvsgit\Command;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption;
+use Symfony\Component\Console\Question\Question;
 use Exception;
 use \Cvsgit\Library\Encode;
 
@@ -119,11 +120,13 @@ class DieCommand extends Command {
    */
   private function enviar() {
 
-    $oDialog   = $this->getHelperSet()->get('dialog');
-    $sConfirma = $oDialog->ask($this->oOutput, 'Remover e Commitar?: (s/N): ');
+    $helper = $this->getHelper('question');
+    $question = new Question('Remover e Commitar?: (s/N): ');
 
-    if ( strtoupper($sConfirma) != 'S' ) {
-      exit(0);
+    $sConfirma = $helper->ask($this->oInput, $this->oOutput, $question);
+
+    if (strtoupper($sConfirma) != 'S') {
+        return 0;
     }
 
     foreach ($this->aArquivos as $aArquivo) {

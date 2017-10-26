@@ -48,7 +48,7 @@ class PullCommand extends Command {
       return $iStatusComandoUpdate;
     }
 
-    $oOutput->writeln(str_repeat(' ', Shell::columns()) . "\r" . "Atualizações baixados");
+    $oOutput->writeln(str_repeat(' ', Shell::columns()) . "\r" . "Atualizações baixadas");
 
     $sComandoRoot = '';
 
@@ -67,10 +67,9 @@ class PullCommand extends Command {
 
     $oComando = $this->getApplication()->execute($sComandoRoot . 'chmod 775 -R ' . getcwd());
     $aRetornoComandoPermissoes = $oComando->output;
-    $iStatusComandoPermissoes = $oComando->code;
 
-    if ( $iStatusComandoPermissoes > 0 ) {
-      throw new Exception("Erro ao atualizar permissões dos arquivos, configura a senha do root: cvsgit config -e");
+    if ( $oComando->code > 0 ) {
+      throw new Exception("Erro ao atualizar permissões dos arquivos, configure a senha do root: cvsgit config -e");
     }
 
   }

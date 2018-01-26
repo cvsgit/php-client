@@ -2,8 +2,8 @@
 
 ### install
 ```bash
-git clone https://github.com/cvsgit/php-client.git
-cd php-client
+git clone https://github.com/cvsgit/php-client.git cvsgit
+cd cvsgit
 composer install
 sudo ln -f -s $(realpath bin/cvsgit) /usr/local/bin/
 ```

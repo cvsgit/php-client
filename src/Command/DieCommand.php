@@ -15,19 +15,18 @@ use \Cvsgit\Library\Encode;
  * @author Luiz Marcelo Schmitt <luiz.marcelo@dbseller.com.br>
  * @package CVS
  */
-class DieCommand extends Command {
-
+class DieCommand extends Command
+{
   /**
    * Carrega as configurações e adiciona os helpers
    */
-  public function configure() {
-
+  public function configure()
+  {
     $this->setName('die');
     $this->setDescription('Remove o(s) arquivo(s) commitado(s) no CVS');
     $this->setHelp('Remove o(s) arquivo(s) commitado(s) no CVS');
 
     $this->addArgument('arquivos', InputArgument::IS_ARRAY, 'Arquivos para remover');
-
     $this->addOption('message', 'm', InputOption::VALUE_REQUIRED, 'Mensagem de log' );
   }
 
@@ -39,8 +38,8 @@ class DieCommand extends Command {
    * @return int|void
    * @throws Exception
    */
-  public function execute($oInput, $oOutput) {
-
+  public function execute($oInput, $oOutput)
+  {
     $this->oInput  = $oInput;
     $this->oOutput = $oOutput;
     $this->oConfig = $this->getApplication()->getConfig();
@@ -55,8 +54,8 @@ class DieCommand extends Command {
    *
    * @throws Exception
    */
-  private function processarParametros() {
-
+  private function processarParametros()
+  {
     $this->aArquivos      = array();
     $aArquivosParaRemover = $this->oInput->getArgument('arquivos');
 
@@ -75,8 +74,8 @@ class DieCommand extends Command {
    *
    * @throws Exception
    */
-  private function validar() {
-
+  private function validar()
+  {
     if (empty($this->aArquivos)) {
       throw new Exception('Informe o(s) arquivo(s) que deseja remover!');
     }
@@ -88,6 +87,13 @@ class DieCommand extends Command {
 
       $sArquivo = $this->getApplication()->clearPath($aArquivo['file']);
       $sErro    = '<error>[x]</error>';
+
+      if (!$this->empty_tag_last_revision($sArquivo)) {
+
+        $sArquivo = $sErro . ' ' . $sArquivo;
+        $this->aMensagemErro[$sArquivo][] = "Arquivo possui tags na última revisão!";
+        $iErros++;
+      }
 
       if ( !file_exists($aArquivo['file']) ) {
 
@@ -118,15 +124,15 @@ class DieCommand extends Command {
   /**
    * Remove os arquivos do diretório e do CVS depois commita
    */
-  private function enviar() {
-
+  private function enviar()
+  {
     $helper = $this->getHelper('question');
     $question = new Question('Remover e Commitar?: (s/N): ');
 
     $sConfirma = $helper->ask($this->oInput, $this->oOutput, $question);
 
     if (strtoupper($sConfirma) != 'S') {
-        return 0;
+      return 0;
     }
 
     foreach ($this->aArquivos as $aArquivo) {
@@ -149,8 +155,8 @@ class DieCommand extends Command {
    * @param string $sArquivo
    * @return bool
    */
-  private function removerArquivo($sArquivo) {
-
+  private function removerArquivo($sArquivo)
+  {
     $sArquivoRemover = $this->getApplication()->clearPath($sArquivo);
     $sRemoveArquivo  = Encode::toUTF8('/bin/rm ' . escapeshellarg($sArquivoRemover));
     $sCommandoRemove = "{$sRemoveArquivo} 2> /tmp/cvsgit_last_error";
@@ -189,8 +195,8 @@ class DieCommand extends Command {
    * @param string $sArquivo
    * @return bool
    */
-  private function commitArquivo($sArquivo) {
-
+  private function commitArquivo($sArquivo)
+  {
     $sMensagemCommit = $this->oInput->getOption('message');
     $sMensagemCommit = (empty($sMensagemCommit)) ? 'Arquivo removido do CVS.' : $sMensagemCommit;
     $sArquivoCommit  = $this->getApplication()->clearPath($sArquivo);
@@ -209,5 +215,48 @@ class DieCommand extends Command {
     }
 
     return true;
+  }
+
+  private function empty_tag_last_revision($file)
+  {
+    exec('cvs log ' . escapeshellarg($file), $output, $code);
+
+    $data = (object) array(
+      'code' => $code,
+      'output' => $output,
+    );
+
+    $lastVersion = 0;
+    $lastVersionTag = 0;
+    $initTags = false;
+
+    foreach ($data->output as $line) {
+
+      if (strpos($line, 'head:') !== false) {
+        $lastVersion = trim(str_replace('head:', '', $line));
+        continue;
+      }
+
+      if (strpos($line, 'symbolic names:') !== false) {
+        $initTags = true;
+        continue;
+      }
+
+      if (!$initTags) {
+        continue;
+      }
+
+      if (strpos($line, 'keyword substitution') !== false|| strpos($line, 'total revisions') !== false) {
+        break;
+      }
+
+      $lineTag = explode(':', $line);
+      $version = trim($lineTag[1]);
+      $lastVersionTag = $version;
+
+      break;
+    }
+
+    return $lastVersion > $lastVersionTag;
   }
 }

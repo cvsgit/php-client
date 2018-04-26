@@ -1,4 +1,6 @@
 <?php
+// declare(ticks = 1);
+
 namespace Cvsgit\Command;
 
 use Symfony\Component\Console\Command\Command;
@@ -6,7 +8,10 @@ use Symfony\Component\Console\Output\ConsoleOutput;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Formatter\OutputFormatterStyle;
+use Symfony\Component\Console\Helper\ProgressBar;
+use Symfony\Component\Console\Terminal;
 use Exception;
+use \Cvsgit\StatusParser;
 use \Cvsgit\Model\ArquivoModel;
 use \Cvsgit\Model\Arquivo;
 use \Cvsgit\Library\Table;
@@ -19,65 +24,16 @@ use \Cvsgit\Library\Glob;
  * @package cvs
  * @version 1.0
  */
-class StatusCommand extends Command {
-
-  /**
-   * Tipos de commit
-   */
-  public $aTiposCommit = array(
-
-    /**
-     * Tem arquivo no projeto mas nao no servidor, cvs add
-     */
-    '?' => 'Novo',
-
-    /**
-     * Tem alteracoes que nao tem no servidor
-     */
-    'M' => 'Modificado',
-
-    /**
-     * Conflito, e cvs tentou fazer merge
-     * cvs altera arquivo colocando as diferencas
-     */
-    'C' => 'Conflito',
-
-    /**
-     * modificado no servidor
-     * versao do servidor ? maior que a do projeto
-     */
-    'U' => 'Atualizado',
-
-    /**
-     * Igual U, diferenca que servidor manda um path
-     */
-    'P' => 'Atualizado',
-
-    /**
-     * Apos dar cvs add, arquivo pronto para ser comitado
-     */
-    'A' => 'Adicionado',
-
-    /**
-     * Apos remover arquivo do projeto, ira remover do servidor se for commitado
-     */
-    'R' => 'Arquivo marcado para remover',
-
-    /**
-     * Identifica um arquivo removido localmente
-     */
-    '-' => 'Removido local'
-
-  );
-
+class StatusCommand extends Command
+{
   /**
    * Configura comando
    *
    * @access public
    * @return void
    */
-  public function configure() {
-
+  public function configure()
+  {
     $this->setName('status');
     $this->setDescription('Lista diferenças com o repositorio');
     $this->setHelp('Lista diferenças com o repositorio');
@@ -100,8 +56,8 @@ class StatusCommand extends Command {
    * @access public
    * @return void
    */
-  public function execute($oInput, $oOutput) {
-
+  public function execute($oInput, $oOutput)
+  {
     $lTabela      = false;
     $lCriados     = false;
     $lModificados = false;
@@ -112,25 +68,6 @@ class StatusCommand extends Command {
     $lPush        = false;
 
     $lPesquisaCvs = true;
-
-    $aArquivosParaCommit   = array();
-    $aTabelaModificacoes   = array();
-    $aModificacoes         = array();
-    $aRetornoComandoUpdate = array();
-
-    $aModificados  = array();
-    $aCriados      = array();
-    $aAtualizados  = array();
-    $aConflitos    = array();
-    $aAdicionados  = array();
-    $aRemovidos    = array();
-    $aRemovidosLocal = array();
-
-    $sStatusOutput       = "";
-    $sStatusOutputTabela = "";
-    $sListaUpdate        = "";
-    $sListaArquivos      = "";
-
     $iParametros = 0;
 
     foreach ( $oInput->getOptions() as $sArgumento => $sValorArgumento ) {
@@ -227,19 +164,15 @@ class StatusCommand extends Command {
       $lPush        = true;
     }
 
-    /**
-     * Model do comando
-     */
-    $oArquivoModel = new ArquivoModel();
-
-    /**
-     * lista dos arquivos adicionados para commit
-     */
-    $aArquivos = $oArquivoModel->getAdicionados();
-
-    foreach ($aArquivos as $oCommit) {
-      $aArquivosParaCommit[] = $this->getApplication()->clearPath($oCommit->getArquivo());
-    }
+    $result = array(
+      'aModificados' => array(),
+      'aCriados' => array(),
+      'aAtualizados' => array(),
+      'aConflitos' => array(),
+      'aAdicionados' => array(),
+      'aRemovidos' => array(),
+      'aRemovidosLocal' => array(),
+    );
 
     /**
      * Pesquisa modificacoes no cvs apenas se:
@@ -248,436 +181,158 @@ class StatusCommand extends Command {
      */
     if ( $lPesquisaCvs ) {
 
-      $oComando = $this->getApplication()->execute('cvs -qn update -dR');
-      $aRetornoComandoUpdate = $oComando->output;
-      $iStatusComandoUpdate  = $oComando->code;
+      $directories = array_filter(glob(getcwd() . '/*' , GLOB_ONLYDIR), function($path) {
+        return $path != getcwd() . '/CVS';
+      });
 
-      /**
-       * Verificação mair que 1 pois quando existem merge cvs retorna status 1
-       * - e merge nao é erro, e sim aviso
-       */
-      if ( $iStatusComandoUpdate > 1 ) {
-        throw new Exception(
-          'Erro nº ' . $iStatusComandoUpdate. ' ao execurar cvs -qn update -dR:' . "\n" .
-          $this->getApplication()->getLastError()
-        );
-      }
-    }
+      array_unshift($directories, getcwd());
 
-    $aIgnorar = $this->getApplication()->getConfig('ignore');
+      $processes = array();
+      $processesData = array();
+      $configFile = CONFIG_DIR . $this->getApplication()->getModel()->getRepositorio() . '_config.json';
 
-    // Verifica arquivos ignorados no .csvignore do projeto
-    if (file_exists('.cvsignore')) {
+      $aIgnorar = $this->getApplication()->getConfig('ignore') ?: array();
 
-      $oArquivoCvsIgnore = new \SplFileObject('.cvsignore');
+      // Verifica arquivos ignorados no .csvignore do projeto
+      if (file_exists(getcwd() . '/.cvsignore')) {
 
-      foreach ($oArquivoCvsIgnore as $iNumeroLinha => $sLinha) {
+        $oArquivoCvsIgnore = new \SplFileObject(getcwd() . '/.cvsignore');
 
-        $sLinha = trim($sLinha);
-        if (!empty($sLinha) && !in_array($sLinha, $aIgnorar)) {
-          $aIgnorar[] = $sLinha;
-        }
-      }
-    }
+        foreach ($oArquivoCvsIgnore as $iNumeroLinha => $sLinha) {
 
-    // convert glob ignore to regex
-    foreach ($aIgnorar as &$sIgnore) {
-      $sIgnore = Glob::toRegex($sIgnore, true, false);
-    }
-
-    // Parse no retorno do comando cvs update
-    foreach ($aRetornoComandoUpdate as $sLinhaUpdate) {
-
-      $aLinha = explode(' ', $sLinhaUpdate);
-      $oLinha = new \StdClass();
-      $sTipo  = trim(array_shift($aLinha));
-
-      /**
-       * Linha não é um tipo de commit: U, ?, C...
-       */
-      if (!in_array($sTipo, array_keys($this->aTiposCommit))) {
-        continue;
-      }
-
-      $oLinha->sTipo    = $sTipo;
-      $oLinha->sArquivo = trim(implode(' ',$aLinha));
-
-      // add slash on directories
-      if (is_dir($oLinha->sArquivo)) {
-        $oLinha->sArquivo .= '/';
-      }
-
-      // Arquivo está na lista dos ignorados, pula
-      foreach ($aIgnorar as $regex) {
-        if (preg_match($regex, $oLinha->sArquivo)) {
-          continue 2;
+          $sLinha = trim($sLinha);
+          if (!empty($sLinha) && !in_array($sLinha, $aIgnorar)) {
+            $aIgnorar[] = $sLinha;
+          }
         }
       }
 
-      /**
-       * Array com todas as modificaos
-       */
-      $aModificacoes[ $sTipo ][] = $oLinha;
+      // convert glob ignore to regex
+      foreach ($aIgnorar as &$regex) {
+        $regex = Glob::toRegex($regex, true, false);
+      }
 
-      /**
-       * Lista com os erros do comando update
-       */
-      $aLinhasErros = explode("\n", $this->getApplication()->getLastError());
+      foreach ($directories as $curr_dir) {
 
-      /**
-       * Arquivo removido localmente
-       * Percorre as linhas de erro procurando o arquivo
-       *
-       * @todo - arquivo com ultima versao no cvs como removido nao aparece no update
-       */
-      foreach ( $aLinhasErros as $sLinhaErro ) {
+        $curr_dir = $this->getApplication()->clearPath($curr_dir);
 
-        /**
-         * Encontrou arquivo na linh atual
-         */
-        if ( strpos($sLinhaErro, "`{$oLinha->sArquivo}'") !== false ) {
-
-          /**
-           * Contei a string lost na linha atual do arquivo
-           */
-          if ( strpos($sLinhaErro, "lost") !== false ) {
-
-            $sTipo = "-";
-            break;
+        foreach ($aIgnorar as $regex) {
+          if (preg_match($regex, $curr_dir)) {
+            continue 2;
           }
         }
 
+        $processesData[] = array(
+          'path' => $curr_dir,
+          'config' => $configFile,
+          'file' => null,
+        );
       }
 
-      /**
-       * Separa em arrays as modificacoes pelo tipo de commit
-       */
-      switch ( $sTipo ) {
+      $limit = 50;
+      $command = dirname(dirname(__DIR__)) . '/bin/status.php ';
 
-        /**
-         * Novo
-         */
-        case '?' :
-          $aCriados[] = $oLinha;
-        break;
+      ProgressBar::setFormatDefinition('custom', ' %percent%% [%bar%] ');
 
-        /**
-         * Modificado
-         */
-        case 'M' :
-          $aModificados[] = $oLinha;
-        break;
+      $progressBar = new ProgressBar($oOutput, count($processesData));
 
-        /**
-         * Conflito
-         */
-        case 'C' :
-          $aConflitos[] = $oLinha;
-        break;
+      // the finished part of the bar
+      $progressBar->setBarCharacter('<comment>=</comment>');
 
-        /**
-         * Atualizado
-         */
-        case 'U' :
-        case 'P' :
-          $aAtualizados[] = $oLinha;
-        break;
+      // the unfinished part of the bar
+      $progressBar->setEmptyBarCharacter(' ');
 
-        /**
-         * Adicionado e nao commitado
-         */
-        case 'A' :
-          $aAdicionados[] = $oLinha;
-        break;
+      // the progress character
+      $progressBar->setProgressCharacter('>');
 
-        /**
-         * Removido e nao commitado
-         */
-        case 'R' :
-          $aRemovidos[] = $oLinha;
-        break;
+      // the bar width
+      $termianl = new Terminal();
+      $progressBar->setBarWidth($termianl->getWidth());
 
-        /**
-         * Removido no projeto local
-         */
-        case '-' :
-          $aRemovidosLocal[] = $oLinha;
-        break;
+      $progressBar->setFormat('custom');
+      // $progressBar->setRedrawFrequency(1);
+      $progressBar->start();
 
-      }
+      while(true) {
 
-    }
-
-    /**
-     * Novos
-     * - arquivos criados e nao adicionados para commit
-     */
-    if ( $lCriados ) {
-
-      $sArquivosCriados = '';
-
-      foreach ( $aCriados as $oArquivoCriado ) {
-
-        if ( in_array($oArquivoCriado->sArquivo, $aArquivosParaCommit) ) {
-          continue;
+        if (empty($processesData) && empty($processes)) {
+          break;
         }
 
-        $sArquivosCriados          .= "\n " . $oArquivoCriado->sArquivo;
-        $aTabelaModificacoes['?'][] = $oArquivoCriado->sArquivo;
-      }
+        foreach ($processesData as $key => $data) {
 
-      if ( !empty($sArquivosCriados) ) {
+          if (count($processes) > $limit) {
+            break;
+          }
 
-        $sStatusOutput .= "\n- Arquivos criados: ";
-        $sStatusOutput .= "\n <comment>$sArquivosCriados</comment>\n";
-      }
-    }
+          $process = new \Symfony\Component\Process\Process(
+            sprintf("%s %s %s %s", $command, $data['path'], $data['config'], 'false', $data['file'])
+          );
 
-    /**
-     * Modificados
-     * - arquivos modificados e nao adicionados para commit
-     */
-    if ( $lModificados ) {
+          try {
 
-      $sArquivosModificados = '';
+            @$process->start();
+            $process->_data = $data;
+            $processes[] = $process;
 
-      foreach ( $aModificados as $oArquivoModificado ) {
+          } catch (\Exception $e) {
+            $this->getApplication()->displayError(
+              "Erro ao iniciar processo: " . $e->getMessage(),
+              $oOutput
+            );
+          }
 
-        if ( in_array($oArquivoModificado->sArquivo, $aArquivosParaCommit) ) {
-          continue;
+          unset($processesData[$key]);
         }
 
-        $sArquivosModificados       .= "\n " . $oArquivoModificado->sArquivo;
-        $aTabelaModificacoes['M'][] = $oArquivoModificado->sArquivo;
-      }
+        foreach ($processes as $key => $curr_proc) {
 
-      if ( !empty($sArquivosModificados) ) {
+          if (!$curr_proc->isTerminated()) {
+            continue;
+          }
 
-        $sStatusOutput .= "\n- Arquivos modificados: ";
-        $sStatusOutput .= "\n <error>$sArquivosModificados</error>\n";
-      }
-    }
+          if ($curr_proc->getExitCode() == 2) {
+            $processesData[] = $curr_proc->_data;
+            unset($processes[$key]);
+            continue;
+            usleep(1000);
+          }
 
-    /**
-     * Conflitos
-     * - arquivos com conflito
-     */
-    if ( $lConflitos ) {
+          $curr_result = json_decode($curr_proc->getOutput(), true);
 
-      $sArquivosConflito = '';
-
-      foreach ( $aConflitos as $oArquivoConflito ) {
-
-
-        $sArquivosConflito         .= "\n " . $oArquivoConflito->sArquivo;
-        $aTabelaModificacoes['C'][] = $oArquivoConflito->sArquivo;
-      }
-
-      if ( !empty($sArquivosConflito) ) {
-
-        $sStatusOutput .= "\n- Arquivos com conflito: ";
-        $sStatusOutput .= "\n <error>$sArquivosConflito</error>\n";
-      }
-    }
-
-    /**
-     * Atualizados
-     * - arquivos atualizados no repository e nao local
-     */
-    if ( $lAtulizados ) {
-
-      $sArquivosAtualizados = '';
-
-      foreach ( $aAtualizados as $oArquivoAtualizado ) {
-
-        if ( in_array($oArquivoAtualizado->sArquivo, $aArquivosParaCommit) ) {
-          continue;
-        }
-
-        $sArquivosAtualizados      .= "\n " . $oArquivoAtualizado->sArquivo;
-        $aTabelaModificacoes['U'][] = $oArquivoAtualizado->sArquivo;
-      }
-
-      if ( !empty($sArquivosAtualizados) ) {
-
-        $sStatusOutput .= "\n- Arquivos Atualizados: ";
-        $sStatusOutput .= "\n <info>$sArquivosAtualizados</info>\n";
-      }
-    }
-
-    /**
-     * Adicionados
-     * - arquivos adicionados e ainda n?o commitados
-     */
-    if ( $lAdicionados ) {
-
-      $sArquivosAdicionados = '';
-
-      foreach ( $aAdicionados as $oArquivoAdicionado ) {
-
-        if ( in_array($oArquivoAdicionado->sArquivo, $aArquivosParaCommit) ) {
-          continue;
-        }
-
-        $sArquivosAdicionados      .= "\n " . $oArquivoAdicionado->sArquivo;
-        $aTabelaModificacoes['A'][] = $oArquivoAdicionado->sArquivo;
-      }
-
-      if ( !empty($sArquivosAdicionados) ) {
-
-        $sStatusOutput .= "\n- Arquivos adicionados: ";
-        $sStatusOutput .= "\n  <info>$sArquivosAdicionados</info>\n";
-      }
-    }
-
-    /**
-     * Removidos
-     * - arquivos removidos e ainda não commitados
-     */
-    if ( $lRemovidos ) {
-
-      $sArquivosRemovidos = '';
-
-      foreach ( $aRemovidos as $oArquivoRemovido ) {
-
-        if ( in_array($oArquivoRemovido->sArquivo, $aArquivosParaCommit) ) {
-          continue;
-        }
-
-        $sArquivosRemovidos        .= "\n " . $oArquivoRemovido->sArquivo;
-        $aTabelaModificacoes['R'][] = $oArquivoRemovido->sArquivo;
-      }
-
-      if ( !empty($sArquivosRemovidos) ) {
-
-        $sStatusOutput .= "\n- Arquivos marcados como removido: ";
-        $sStatusOutput .= "\n <info>$sArquivosRemovidos</info>\n";
-      }
-
-      $sArquivosRemovidosLocal = '';
-      foreach ($aRemovidosLocal as $oArquivoRemovidoLocal) {
-
-        if ( in_array($oArquivoRemovidoLocal->sArquivo, $aArquivosParaCommit) ) {
-          continue;
-        }
-
-        $sArquivosRemovidosLocal        .= "\n " . $oArquivoRemovidoLocal->sArquivo;
-        $aTabelaModificacoes['-'][] = $oArquivoRemovidoLocal->sArquivo;
-      }
-
-      if ( !empty($sArquivosRemovidosLocal) ) {
-
-        $sStatusOutput .= "\n- Arquivos removidos do projeto local: ";
-        $sStatusOutput .= "\n <error>{$sArquivosRemovidosLocal}</error>\n";
-      }
-    }
-
-    /**
-     * Tabela
-     * - Lista modificações em tableas
-     */
-    if ( $lTabela ) {
-
-      $oTabela = new Table();
-      $oTabela->setHeaders(array('Tipo', 'Arquivo'));
-
-      foreach ($aTabelaModificacoes as $sTipo => $aArquivosModificacao) {
-
-        $sTipoModificacao = "[$sTipo] " . strtr($sTipo, $this->aTiposCommit);
-
-        foreach($aArquivosModificacao as $sArquivoModificacao) {
-          $oTabela->addRow(array($sTipoModificacao, $sArquivoModificacao));
-        }
-      }
-
-      if ( !empty($aTabelaModificacoes) ) {
-
-        $sStatusOutputTabela .= "\nModificações nao tratadas: \n";
-        $sStatusOutputTabela .= $oTabela->render();
-      }
-
-    }
-
-    /**
-     * Push
-     * - arquivos para commit
-     */
-    if ( $lPush ) {
-
-      /**
-       * Tabela
-       * - Lista arquivos prontos para commit em tabela
-       */
-      if ( $lTabela ) {
-
-        $oTabelaCommit = new Table();
-        $oTabelaCommit->setHeaders(array('Arquivo', 'Tag Mensagem', 'Tag Arquivo', 'Mensagem', 'Tipo'));
-
-        foreach ($aArquivos as $oCommit) {
-
-            $sTipo = $oCommit->getTipo();
-
-            switch ( $oCommit->getComando() ) {
-
-              case Arquivo::COMANDO_ADICIONAR_TAG :
-                $sTipo = 'Adicionar tag';
-              break;
-
-              case Arquivo::COMANDO_REMOVER_TAG :
-                $sTipo = 'Remover tag';
-              break;
+          if (!empty($curr_result)) {
+            foreach ($curr_result as $curr_result_key => $values) {
+              foreach ($values as $value) {
+                $result[$curr_result_key][] = $value;
+              }
             }
+          }
 
-            $oTabelaCommit->addRow(array(
-              $this->getApplication()->clearPath($oCommit->getArquivo()), $oCommit->getTagMensagem(), $oCommit->getTagArquivo(), $oCommit->getMensagem(), $sTipo
-            ));
+          $progressBar->advance();
+          unset($processes[$key]);
         }
 
-        if ( !empty($aArquivos) ) {
-
-          $sStatusOutputTabela .= "\nArquivos prontos para commit: \n";
-          $sStatusOutputTabela .= $oTabelaCommit->render();
-        }
+        usleep(1000);
       }
 
-      /**
-       * Sem tabela
-       * - Lista arquivos prontos para commit em linha
-       */
-      if ( !$lTabela) {
-
-        foreach ($aArquivos as $oCommit) {
-          $sListaArquivos .= "\n " . $this->getApplication()->clearPath($oCommit->getArquivo()) . " ";
-        }
-
-        if ( !empty($sListaArquivos) ) {
-
-          $sStatusOutput .= "\n- Arquivos prontos para commit: ";
-          $sStatusOutput .= "\n <info>$sListaArquivos</info>\n";
-        }
-      }
-
+      $progressBar->finish();
+      $progressBar->clear();
     }
 
-    /**
-     * Nenhuma modifiação encontrada
-     */
-    if ( empty($sStatusOutput) && empty($sStatusOutputTabela) ) {
-
-      $oOutput->writeln('Nenhuma modificação encontrada');
-      return 0;
-    }
-
-    if ( $lTabela ) {
-      $sStatusOutput = $sStatusOutputTabela;
-    }
-
-    $sStatusOutput = ltrim($sStatusOutput, "\n");
+    $statusParser = new StatusParser();
+    $statusOutput = $statusParser->execute($result, array(
+      'lCriados' => $lCriados,
+      'lModificados' => $lModificados,
+      'lConflitos' => $lConflitos,
+      'lAtulizados' => $lAtulizados,
+      'lAdicionados' => $lAdicionados,
+      'lRemovidos' => $lRemovidos,
+      'lPush' => $lPush,
+      'lTabela' => $lTabela,
+    ));
 
     $style = new OutputFormatterStyle('red');
     $oOutput->getFormatter()->setStyle('error', $style);
-
-    $oOutput->writeln($sStatusOutput);
+    $oOutput->writeln($statusOutput);
   }
-
 }

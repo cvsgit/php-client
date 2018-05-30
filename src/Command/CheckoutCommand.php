@@ -46,12 +46,7 @@ class CheckoutCommand extends Command {
     $aCommandos = array();
 
     foreach ($aArquivos as $sArquivo) {
-
-      if (file_exists($sArquivo)) {
-        $aCommandos[$sArquivo][] = 'rm ' . escapeshellarg($sArquivo);
-      }
-
-      $aCommandos[$sArquivo][] = 'cvs update ' . escapeshellarg($sArquivo);
+      $aCommandos[$sArquivo][] = 'cvs update -C ' . escapeshellarg($sArquivo);
     }
 
     $this->oOutput->writeln('Comandos:');

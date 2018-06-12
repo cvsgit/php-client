@@ -240,41 +240,48 @@ class DiffCommand extends Command {
    */
   private function binario($sArquivoPrimeiraVersao, $sArquivoSegundaVersao) {
 
-    $aParametrosDiff = array();
-    $sMascaraBinario = $this->getApplication()->getConfig('mascaraBinarioDiff');
+    $diffParams = array();
+    $maskBinary = $this->getApplication()->getConfig('mascaraBinarioDiff');
 
-    if ( empty($sMascaraBinario) ) {
+    if ( empty($maskBinary) ) {
       throw new Exception("Mascara para binario do diff não encontrado, verifique arquivo de configuração");
     }
 
-    $aParametrosMascara = String::tokenize($sMascaraBinario);
-    $sBinario           = array_shift($aParametrosMascara);
+    if (is_string($maskBinary)) {
+      $params = String::tokenize($maskBinary);
+    } elseif (is_array($maskBinary)) {
+      $params = $maskBinary;
+    } else {
+      throw new Exception("Mascara para binario do diff deve ser to tipo string ou array, verifique arquivo de configuração");
+    }
 
-    if ( empty($sBinario) ) {
+    $binary = array_shift($params);
+
+    if ( empty($binary) ) {
       throw new Exception("Arquivo binário para diff não encontrado");
     }
 
     /**
      * Percorre os parametros e inclui arquivos para diff
      */
-    foreach ($aParametrosMascara as $sParametro) {
+    foreach ($params as $param) {
 
-      if ( $sParametro == '[arquivo_1]' ) {
-        $sParametro = $sArquivoPrimeiraVersao;
+      if ( strpos($param, '[arquivo_1]') !== false ) {
+        $param = str_replace('[arquivo_1]', $sArquivoPrimeiraVersao, $param);
       }
 
-      if ( $sParametro == '[arquivo_2]' ) {
-        $sParametro = $sArquivoSegundaVersao;
+      if ( strpos($param, '[arquivo_2]') !== false ) {
+        $param = str_replace('[arquivo_2]', $sArquivoSegundaVersao, $param);
       }
 
-      $aParametrosDiff[] = $sParametro;
+      $diffParams[] = $param;
     }
 
     $pid = pcntl_fork();
     switch ($pid) {
 
       case 0 :
-        pcntl_exec($sBinario, $aParametrosDiff);
+        pcntl_exec($binary, $diffParams);
       break;
 
       default :

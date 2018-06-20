@@ -229,7 +229,8 @@ class StatusCommand extends Command
         );
       }
 
-      $limit = 50;
+      $errors = array();
+      $limit = 5;
       $command = dirname(dirname(__DIR__)) . '/bin/status.php ';
 
       ProgressBar::setFormatDefinition('custom', ' %percent%% [%bar%] ');
@@ -291,14 +292,20 @@ class StatusCommand extends Command
             continue;
           }
 
-          if ($curr_proc->getExitCode() == 2) {
-            $processesData[] = $curr_proc->_data;
-            unset($processes[$key]);
-            continue;
-            usleep(1000);
-          }
+          // if ($curr_proc->getExitCode() == 2) {
+          //   $processesData[] = $curr_proc->_data;
+          //   unset($processes[$key]);
+          //   continue;
+          //   usleep(1000);
+          // }
 
-          $curr_result = json_decode($curr_proc->getOutput(), true);
+          $curr_result = null;
+
+          if ($curr_proc->getExitCode() > 1) {
+            $errors[$curr_proc->_data['path']] = $curr_proc->getErrorOutput();
+          } else {
+            $curr_result = json_decode($curr_proc->getOutput(), true);
+          }
 
           if (!empty($curr_result)) {
             foreach ($curr_result as $curr_result_key => $values) {
@@ -334,5 +341,13 @@ class StatusCommand extends Command
     $style = new OutputFormatterStyle('red');
     $oOutput->getFormatter()->setStyle('error', $style);
     $oOutput->writeln($statusOutput);
+
+    if (!empty($errors)) {
+      foreach ($errors as $path => $error) {
+        $oOutput->writeln(sprintf(' - <error>Erro ao atualizar: %s</error>', $path));
+        $oOutput->writeln(sprintf('   <error>%s</error>', $error));
+      }
+      $oOutput->writeln("");
+    }
   }
 }

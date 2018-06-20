@@ -11,7 +11,7 @@ use \Cvsgit\Library\Config;
 
 class CVSApplication extends Application {
 
-  const VERSION = '1.2';
+  const VERSION = '1.2.1';
 
   private $oConfig;
   private $oModel;
